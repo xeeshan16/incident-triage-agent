@@ -387,8 +387,8 @@ This is a portfolio-sized service. Before production use it would need at least:
 - **Observability.** Logs only: no metrics, traces or token-cost dashboards.
 - **Ingest at scale.** The per-service advisory lock serialises ingest per service, which is
   fine at moderate volume but would need rethinking for a very high-volume single service.
-- **The Docker image and CI workflow have not been run.** The image could not be built in the
-  development sandbox (no registry access), and CI has not run because nothing has been pushed.
+- **The Docker image is only built in CI.** It could not be built in the development sandbox (no
+  registry access); the CI `docker` job builds it but nothing runs the container end to end.
 
 ## License
 
