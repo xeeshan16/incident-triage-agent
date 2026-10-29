@@ -1,4 +1,4 @@
-"""Regression tests for defects found in the post-build review (see REVIEW.md, findings log)."""
+"""Regression tests for defects F1-F10, each fixed in its own commit after the initial build."""
 
 from __future__ import annotations
 
