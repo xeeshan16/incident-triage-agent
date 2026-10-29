@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import Annotated, Literal
 
@@ -33,6 +34,8 @@ from triage.services.errors import AgentRunFailedError
 
 router = APIRouter()
 
+READINESS_TIMEOUT_SECONDS = 2.0
+
 Limit = Annotated[int, Query(ge=1, le=200)]
 Offset = Annotated[int, Query(ge=0, le=100_000)]
 # Bounded to Postgres BIGINT so out-of-range ids are a 422, not a driver error (500).
@@ -48,10 +51,12 @@ async def healthz() -> dict[str, str]:
 
 @router.get("/readyz", tags=["ops"])
 async def readyz(factory: SessionFactoryDep, response: Response) -> dict[str, str]:
+    # Bounded: an unreachable database host otherwise blocks on TCP connect for ~60s, well past
+    # any orchestrator probe timeout.
     try:
-        async with factory() as session:
+        async with asyncio.timeout(READINESS_TIMEOUT_SECONDS), factory() as session:
             await session.execute(text("SELECT 1"))
-    except Exception:  # noqa: BLE001 - any DB failure means not ready
+    except Exception:  # noqa: BLE001 - any DB failure (incl. timeout) means not ready
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "unavailable", "database": "error"}
     return {"status": "ok", "database": "ok"}

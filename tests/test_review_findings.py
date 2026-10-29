@@ -285,3 +285,22 @@ async def test_oversized_tool_output_is_truncated_structurally(sessions: Session
         assert alert["payload"].endswith("</untrusted_alert_payload>")
     # Only alerts actually shown to the model are citable.
     assert prov.alert == {a["id"] for a in body["alerts"]}
+
+
+# --- F10: readiness probe must answer quickly when the database hangs -------------------------
+
+
+async def test_readyz_is_bounded_when_db_hangs(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    async def hang(*_: Any, **__: Any) -> Any:
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(AsyncSession, "execute", hang)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    r = await client.get("/readyz")
+    assert r.status_code == 503
+    assert loop.time() - started < 5
