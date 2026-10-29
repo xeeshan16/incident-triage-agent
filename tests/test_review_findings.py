@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -96,3 +97,13 @@ async def test_nul_bytes_in_runbooks_and_reviews_are_rejected(client: AsyncClien
 async def test_out_of_range_ids_are_422(client: AsyncClient, method: str, path: str) -> None:
     kwargs: dict[str, Any] = {"json": {"reviewer": "z"}} if method == "POST" else {}
     assert (await client.request(method, path, **kwargs)).status_code == 422
+
+
+# --- F3: future-dated alerts must not hold an incident's grouping window open -----------------
+
+
+async def test_far_future_received_at_is_rejected(client: AsyncClient) -> None:
+    far = (datetime.now(UTC) + timedelta(days=365)).isoformat()
+    assert (await client.post("/alerts", json={**ALERT, "received_at": far})).status_code == 422
+    skew = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()  # small clock skew is fine
+    assert (await client.post("/alerts", json={**ALERT, "received_at": skew})).status_code == 201

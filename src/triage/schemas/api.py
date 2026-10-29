@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
@@ -13,6 +13,9 @@ IncidentStatus = Literal["open", "actioned"]
 ProposalStatus = Literal["pending_review", "approved", "rejected"]
 
 _MAX_PAYLOAD_BYTES = 32_768
+# Tolerated clock skew for caller-supplied timestamps. A far-future received_at would keep an
+# incident's dedup/grouping window open indefinitely.
+MAX_FUTURE_SKEW = timedelta(minutes=5)
 PG_BIGINT_MAX = 2**63 - 1
 
 
@@ -59,9 +62,13 @@ class AlertIn(BaseModel):
 
     @field_validator("received_at")
     @classmethod
-    def _aware(cls, v: datetime | None) -> datetime | None:
-        if v is not None and v.tzinfo is None:
+    def _received_at(cls, v: datetime | None) -> datetime | None:
+        if v is None:
+            return v
+        if v.tzinfo is None:
             raise ValueError("received_at must include a timezone offset")
+        if v > datetime.now(UTC) + MAX_FUTURE_SKEW:
+            raise ValueError("received_at is too far in the future")
         return v
 
 
