@@ -9,9 +9,9 @@ The scope is deliberately small: about 2,700 lines of application code, with the
 loop, tools and guardrails in `src/triage/agent/`) readable in about 30 minutes. Tests and evals
 add roughly another 2,400 lines.
 
-> **AI assistance.** This code was written with AI assistance (Claude) and then reviewed. The
-> checks applied, the defects the review found, and the commits that fixed them are documented
-> in **[REVIEW.md](REVIEW.md)**. The maintainer's own review section in that file is still open.
+> **AI assistance.** This code was written with AI assistance (Claude) and reviewed by me. The
+> automated checks, the defects found and the commits that fixed them, and my own review notes
+> are in **[REVIEW.md](REVIEW.md)**.
 
 ## Contents
 

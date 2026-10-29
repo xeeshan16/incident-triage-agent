@@ -10,7 +10,7 @@ Two kinds of review are described separately:
 1. **Automated gates and a structured self-review** carried out during the build session by the
    AI assistant itself (sections 1 and 2). A self-review by the same system that wrote the code
    has obvious blind spots; treat it as a first pass, not as independent assurance.
-2. **Maintainer review** by the repository owner (section 3), which is still to be done.
+2. **Maintainer review** by the repository owner (section 3).
 
 ## 1. Review process
 
@@ -134,15 +134,16 @@ These were identified but deliberately left, and are listed in the README limita
 
 ## Maintainer review (Zeeshan)
 
-> TODO: to be completed by the maintainer. Nothing in this section has been filled in yet.
+Reviewed 2026-10-29.
 
-- [ ] Read the codebase, starting with `src/triage/agent/loop.py` and `src/triage/agent/tools.py`
+- [x] Read the codebase, starting with `src/triage/agent/loop.py` and `src/triage/agent/tools.py`
 - [ ] Re-run all gates locally: `make check`
 - [ ] Verify each finding F1-F10 against its commit and regression test
 - [ ] Run the eval scenarios against the live API: `python -m evals.run_evals --live`
 - [ ] Check the CI run on GitHub after the first push (including the Docker build job)
-- [ ] Record any additional findings, and what was changed, below
+- [x] Record any additional findings, and what was changed, below
 
 Notes:
 
-<!-- Maintainer notes go here. -->
+- Code review complete; no additional findings and no changes requested.
+- Not yet run against the live Claude API.
