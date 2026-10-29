@@ -130,7 +130,9 @@ def _cite_seen(
     return step
 
 
-NOW = datetime.now(UTC).replace(microsecond=0)
+# Scenario timelines run forward from here; anchored in the past so no timestamp is in the
+# future (ingest rejects far-future received_at).
+NOW = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=2)
 
 # ----------------------------------------------------------------------------- scenarios
 
