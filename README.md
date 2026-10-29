@@ -7,7 +7,7 @@ or rejects the proposal; the agent never takes action itself.
 
 The scope is deliberately small: about 2,700 lines of application code, with the core (agent
 loop, tools and guardrails in `src/triage/agent/`) readable in about 30 minutes. Tests and evals
-add roughly another 2,900 lines.
+add roughly another 2,400 lines.
 
 > **AI assistance.** This code was written with AI assistance (Claude) and then reviewed. The
 > checks applied, the defects the review found, and the commits that fixed them are documented
@@ -168,9 +168,9 @@ order of how much the design relies on them:
 Points 3 to 5 reduce risk; they do not eliminate it. Points 1 and 2 are the guarantees.
 
 **Model choice and `tool_choice`.** The model defaults to `claude-sonnet-5-5` (override with
-`TRIAGE_MODEL`). Forcing a specific tool (`tool_choice` of `any` or `tool`) is rejected by current
-Sonnet and Opus models, so the loop uses `auto` and relies on strict tool schemas, the system
-prompt and nudges to get a `submit_triage` call.
+`TRIAGE_MODEL`). Forcing a tool (`tool_choice` of `any` or `tool`) returns a 400 on Claude Sonnet 5.5
+and Opus 5.5, so the loop uses `auto`, as the API docs recommend for those models, and relies on
+strict tool schemas, the system prompt and nudges to get a `submit_triage` call.
 
 ## API examples
 

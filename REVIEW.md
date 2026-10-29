@@ -34,8 +34,8 @@ Notes on the gates:
 - The test database is built by running the Alembic migrations, so migrations are exercised on
   every test run.
 - Two guardrails were mutation-checked by hand: disabling tag escaping and disabling the
-  citation-provenance check each made the expected tests fail (1 and 5 tests respectively), then
-  the code was restored.
+  citation-provenance check each made the expected tests fail (2 and 5 tests respectively when
+  re-run on the final commit), then the code was restored.
 - The Docker build could not be run in the build sandbox (registry access was blocked). It is
   covered only by the CI job, which has not run yet because nothing has been pushed.
 
