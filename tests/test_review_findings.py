@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event
+from sqlalchemy import event, select
 
-from triage.agent.fake import ScriptedLLM
+from tests.conftest import add_alert
+from tests.test_agent_loop import submit_citing_seen_alerts
+from triage.agent.fake import ScriptedLLM, tool_call
+from triage.agent.llm import LLMResponse
 from triage.config import Settings
+from triage.db.base import SessionFactory
+from triage.db.models import AgentRun
 from triage.main import create_app
 
 ALERT = {
@@ -107,3 +113,49 @@ async def test_far_future_received_at_is_rejected(client: AsyncClient) -> None:
     assert (await client.post("/alerts", json={**ALERT, "received_at": far})).status_code == 422
     skew = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()  # small clock skew is fine
     assert (await client.post("/alerts", json={**ALERT, "received_at": skew})).status_code == 201
+
+
+# --- F4: agent runs must never be left in 'running' -------------------------------------------
+
+
+async def test_run_is_finalised_when_persisting_proposal_fails(
+    sessions: SessionFactory, make_agent: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from triage.agent import loop
+
+    _, incident_id = await add_alert(sessions)
+
+    def broken(**_: Any) -> Any:
+        raise RuntimeError("insert failed")
+
+    monkeypatch.setattr(loop, "TriageProposal", broken)
+    llm = ScriptedLLM(
+        [tool_call("get_incident_alerts", {"incident_id": incident_id}), submit_citing_seen_alerts]
+    )
+    with pytest.raises(RuntimeError, match="insert failed"):
+        await make_agent(llm).run(incident_id)
+    async with sessions() as s:
+        run = (await s.scalars(select(AgentRun))).one()
+        assert run.status == "failed"
+        assert run.termination_reason == "internal_error"
+
+
+async def test_run_is_finalised_when_cancelled(sessions: SessionFactory, make_agent: Any) -> None:
+    _, incident_id = await add_alert(sessions)
+    started = asyncio.Event()
+
+    class Hang(ScriptedLLM):
+        async def create(self, **kwargs: Any) -> LLMResponse:
+            started.set()
+            await asyncio.sleep(60)
+            raise AssertionError("unreachable")
+
+    task = asyncio.create_task(make_agent(Hang([])).run(incident_id))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    async with sessions() as s:
+        run = (await s.scalars(select(AgentRun))).one()
+        assert run.status == "failed"
+        assert run.termination_reason == "cancelled"

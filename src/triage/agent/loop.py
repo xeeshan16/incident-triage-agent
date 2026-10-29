@@ -65,6 +65,7 @@ MAX_TOKENS = "max_tokens"
 UNEXPECTED_STOP = "unexpected_stop_reason"
 INVALID_CITATIONS = "invalid_citations"
 INTERNAL_ERROR = "internal_error"
+CANCELLED = "cancelled"
 
 FLAG_INJECTION_MODEL = "prompt_injection_reported_by_model"
 FLAG_INJECTION_HEURISTIC = "prompt_injection_heuristic_match"
@@ -178,6 +179,8 @@ class TriageAgent:
         bound = log.bind(agent_run_id=state.run_id, incident_id=incident_id)
         bound.info("agent_run_started", model=self._config.model)
 
+        # Every exit path below must finalise the agent_runs row; a run left in 'running' is an
+        # audit-trail lie. Unexpected exceptions and cancellation finalise, then propagate.
         timeout_cm = asyncio.timeout(self._config.timeout_seconds)
         result: _Accepted | _Stopped
         try:
@@ -190,6 +193,10 @@ class TriageAgent:
             result = _Stopped(TIMEOUT, f"run exceeded {self._config.timeout_seconds}s")
         except LLMError as exc:
             result = _Stopped(LLM_ERROR, str(exc))
+        except asyncio.CancelledError:
+            # Shielded so the status write itself is not cancelled; then re-raise.
+            await asyncio.shield(self._finish_failed(state, _Stopped(CANCELLED, "cancelled")))
+            raise
         except Exception as exc:
             await self._finish_failed(state, _Stopped(INTERNAL_ERROR, type(exc).__name__))
             raise
@@ -197,7 +204,15 @@ class TriageAgent:
         if isinstance(result, _Stopped):
             outcome = await self._finish_failed(state, result)
         else:
-            outcome = await self._finish_succeeded(state, result)
+            try:
+                outcome = await self._finish_succeeded(state, result)
+            except BaseException as exc:
+                # The proposal transaction rolled back; record the run as failed.
+                reason = CANCELLED if isinstance(exc, asyncio.CancelledError) else INTERNAL_ERROR
+                await asyncio.shield(
+                    self._finish_failed(state, _Stopped(reason, type(exc).__name__))
+                )
+                raise
         bound.info(
             "agent_run_finished",
             succeeded=outcome.succeeded,
