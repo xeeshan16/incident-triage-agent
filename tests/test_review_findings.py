@@ -26,10 +26,10 @@ ALERT = {
 async def test_commit_happens_before_response_start(
     settings: Settings, engine: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from triage.api import routes
+    from triage.services import alerts as alert_service
 
     events: list[str] = []
-    real_ingest = routes.alert_service.ingest_alert
+    real_ingest = alert_service.ingest_alert
 
     async def recording_ingest(session: Any, *args: Any, **kwargs: Any) -> Any:
         # Record when *this request's* transaction commits (other code paths, e.g. the
@@ -37,7 +37,7 @@ async def test_commit_happens_before_response_start(
         event.listen(session.sync_session, "after_commit", lambda _: events.append("commit"))
         return await real_ingest(session, *args, **kwargs)
 
-    monkeypatch.setattr(routes.alert_service, "ingest_alert", recording_ingest)
+    monkeypatch.setattr(alert_service, "ingest_alert", recording_ingest)
     app = create_app(settings, llm=ScriptedLLM([]))
 
     async def recording_app(scope: Any, receive: Any, send: Any) -> None:
