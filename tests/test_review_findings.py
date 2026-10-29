@@ -159,3 +159,28 @@ async def test_run_is_finalised_when_cancelled(sessions: SessionFactory, make_ag
         run = (await s.scalars(select(AgentRun))).one()
         assert run.status == "failed"
         assert run.termination_reason == "cancelled"
+
+
+# --- F5: only one proposal can action an incident ---------------------------------------------
+
+
+async def test_cannot_approve_proposal_for_already_actioned_incident(
+    client: AsyncClient, scripted: ScriptedLLM, sessions: SessionFactory
+) -> None:
+    created = (await client.post("/alerts", json=ALERT)).json()
+    incident_id = created["incident_id"]
+    for _ in range(2):
+        scripted.steps.extend(
+            [
+                tool_call("get_incident_alerts", {"incident_id": incident_id}),
+                submit_citing_seen_alerts,
+            ]
+        )
+    p1 = (await client.post(f"/incidents/{incident_id}/triage")).json()
+    p2 = (await client.post(f"/incidents/{incident_id}/triage")).json()
+    assert (await client.post(f"/triage/{p1['id']}/approve", json={"reviewer": "a"})).is_success
+    r = await client.post(f"/triage/{p2['id']}/approve", json={"reviewer": "b"})
+    assert r.status_code == 409
+    assert "actioned" in r.json()["detail"]
+    # Rejecting the stale proposal is still allowed (housekeeping).
+    assert (await client.post(f"/triage/{p2['id']}/reject", json={"reviewer": "b"})).is_success

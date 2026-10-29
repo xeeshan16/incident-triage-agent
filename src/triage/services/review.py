@@ -40,17 +40,21 @@ async def review_proposal(
     if proposal.status != "pending_review":
         raise ConflictError(f"triage proposal {proposal_id} is already {proposal.status}")
 
-    proposal.status = decision
-    proposal.reviewer = reviewer
-    proposal.review_note = note
-    proposal.reviewed_at = datetime.now(UTC)
-
     if decision == "approved":
+        # Lock order is always proposal -> incident, so concurrent reviews cannot deadlock.
         incident = await session.scalar(
             select(Incident).where(Incident.id == proposal.incident_id).with_for_update()
         )
         if incident is None:  # pragma: no cover - FK makes this unreachable
             raise NotFoundError(f"incident {proposal.incident_id} not found")
+        if incident.status != "open":
+            # Another proposal for this incident was already approved.
+            raise ConflictError(f"incident {incident.id} is already {incident.status}")
         incident.status = "actioned"
+
+    proposal.status = decision
+    proposal.reviewer = reviewer
+    proposal.review_note = note
+    proposal.reviewed_at = datetime.now(UTC)
     await session.flush()
     return proposal
