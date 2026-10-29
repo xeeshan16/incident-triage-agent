@@ -72,6 +72,8 @@ filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]
 
 [tool.coverage.run]
 source = ["triage"]
+# SQLAlchemy asyncio runs ORM work inside greenlets; without this, coverage under-reports.
+concurrency = ["greenlet", "thread"]
 branch = true
 
 [tool.coverage.report]
