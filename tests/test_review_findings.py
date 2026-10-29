@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -212,3 +213,31 @@ async def test_runbook_and_summary_text_is_wrapped_as_untrusted(sessions: Sessio
         assert hit[field].count("</untrusted_text>") == 1
         assert "<system>" not in hit[field]
     assert hit["tags"] == ["<untrusted_text>&lt;b&gt;</untrusted_text>"]
+
+
+# --- F7: never send an assistant turn with empty content --------------------------------------
+
+
+async def test_empty_end_turn_does_not_produce_empty_assistant_message(
+    sessions: SessionFactory, make_agent: Any
+) -> None:
+    from triage.agent.fake import text_reply
+    from triage.agent.llm import Usage
+
+    _, incident_id = await add_alert(sessions)
+    empty = LLMResponse(stop_reason="end_turn", usage=Usage(10, 0), raw_content=[])
+    llm = ScriptedLLM(
+        [
+            tool_call("get_incident_alerts", {"incident_id": incident_id}),
+            empty,
+            text_reply("Done."),
+            submit_citing_seen_alerts,
+        ]
+    )
+    outcome = await make_agent(llm).run(incident_id)
+    assert outcome.succeeded
+    for call in llm.calls:
+        for message in call["messages"]:
+            assert message["content"], f"empty {message['role']} message sent to the API"
+        roles = [m["role"] for m in call["messages"]]
+        assert all(a != b for a, b in itertools.pairwise(roles)), roles

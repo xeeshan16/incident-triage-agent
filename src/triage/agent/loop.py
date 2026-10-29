@@ -252,7 +252,11 @@ class TriageAgent:
             if response.stop_reason not in ("tool_use", "end_turn", "stop_sequence"):
                 return _Stopped(UNEXPECTED_STOP, f"stop_reason={response.stop_reason}")
 
-            messages.append({"role": "assistant", "content": response.raw_content})
+            # The API rejects an assistant message with empty content, and an empty end_turn
+            # can happen. Substitute a minimal text block so the transcript stays valid and
+            # roles keep alternating.
+            assistant_content = response.raw_content or [{"type": "text", "text": "(no output)"}]
+            messages.append({"role": "assistant", "content": assistant_content})
             is_last = iteration == cfg.max_iterations
 
             # 1) A submission is judged against what the model had seen *before* this turn,
