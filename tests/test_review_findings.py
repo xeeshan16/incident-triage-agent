@@ -55,3 +55,44 @@ async def test_commit_happens_before_response_start(
         r = await c.post("/alerts", json=ALERT)
     assert r.status_code == 201
     assert events == ["commit", "response.start"], events
+
+
+# --- F2: input Postgres rejects must be a 422, not a 500 -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {**ALERT, "title": "bad\u0000title"},
+        {**ALERT, "fingerprint": "fp\u0000"},
+        {**ALERT, "payload": {"msg": "a\u0000b"}},
+        {**ALERT, "payload": {"nested": [{"k\u0000": 1}]}},
+    ],
+)
+async def test_nul_bytes_in_alerts_are_rejected(client: AsyncClient, body: dict[str, Any]) -> None:
+    assert (await client.post("/alerts", json=body)).status_code == 422
+
+
+async def test_nul_bytes_in_runbooks_and_reviews_are_rejected(client: AsyncClient) -> None:
+    r = await client.post("/runbooks", json={"title": "t", "body": "b\u0000"})
+    assert r.status_code == 422
+    r = await client.post("/runbooks", json={"title": "t", "body": "b", "tags": ["x\u0000"]})
+    assert r.status_code == 422
+    assert (await client.post("/triage/1/approve", json={"reviewer": "z\u0000"})).status_code == 422
+    assert (await client.get("/incidents", params={"service": "a\u0000"})).status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/incidents/99999999999999999999"),
+        ("POST", "/incidents/99999999999999999999/triage"),
+        ("GET", "/triage/99999999999999999999"),
+        ("POST", "/triage/99999999999999999999/reject"),
+        ("GET", "/incidents/0"),
+        ("GET", "/incidents/-1"),
+    ],
+)
+async def test_out_of_range_ids_are_422(client: AsyncClient, method: str, path: str) -> None:
+    kwargs: dict[str, Any] = {"json": {"reviewer": "z"}} if method == "POST" else {}
+    assert (await client.request(method, path, **kwargs)).status_code == 422

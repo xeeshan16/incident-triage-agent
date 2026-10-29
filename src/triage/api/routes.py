@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Path, Query, Response, status
 from sqlalchemy import text
 
 from triage.api.deps import AgentDep, SessionDep, SessionFactoryDep, SettingsDep
 from triage.schemas.api import (
+    PG_BIGINT_MAX,
     AlertIn,
     AlertIngestResult,
     AlertOut,
@@ -21,6 +22,7 @@ from triage.schemas.api import (
     RunbookIn,
     RunbookOut,
     RunbookSearchHit,
+    Text,
     TriageProposalOut,
 )
 from triage.services import alerts as alert_service
@@ -33,6 +35,10 @@ router = APIRouter()
 
 Limit = Annotated[int, Query(ge=1, le=200)]
 Offset = Annotated[int, Query(ge=0, le=100_000)]
+# Bounded to Postgres BIGINT so out-of-range ids are a 422, not a driver error (500).
+IncidentId = Annotated[int, Path(ge=1, le=PG_BIGINT_MAX)]
+ProposalId = Annotated[int, Path(ge=1, le=PG_BIGINT_MAX)]
+ServiceFilter = Annotated[Text | None, Query(max_length=100)]
 
 
 @router.get("/healthz", tags=["ops"])
@@ -86,7 +92,7 @@ async def ingest_alert(
 async def list_incidents(
     session: SessionDep,
     status_: Annotated[IncidentStatus | None, Query(alias="status")] = None,
-    service: Annotated[str | None, Query(max_length=100)] = None,
+    service: ServiceFilter = None,
     limit: Limit = 50,
     offset: Offset = 0,
 ) -> Page[IncidentSummary]:
@@ -99,7 +105,7 @@ async def list_incidents(
 
 
 @router.get("/incidents/{incident_id}", response_model=IncidentDetail, tags=["incidents"])
-async def get_incident(incident_id: int, session: SessionDep) -> IncidentDetail:
+async def get_incident(incident_id: IncidentId, session: SessionDep) -> IncidentDetail:
     incident = await incident_service.get_incident_detail(session, incident_id)
     return IncidentDetail.model_validate(incident)
 
@@ -112,7 +118,7 @@ async def get_incident(incident_id: int, session: SessionDep) -> IncidentDetail:
     responses={502: {"description": "Agent run ended without a valid proposal"}},
 )
 async def triage_incident(
-    incident_id: int, agent: AgentDep, factory: SessionFactoryDep
+    incident_id: IncidentId, agent: AgentDep, factory: SessionFactoryDep
 ) -> TriageProposalOut:
     # No request-scoped transaction here: the agent manages short transactions itself so that
     # no DB connection is held for the duration of model calls.
@@ -144,19 +150,21 @@ async def _review(
 
 
 @router.get("/triage/{proposal_id}", response_model=TriageProposalOut, tags=["triage"])
-async def get_triage(proposal_id: int, session: SessionDep) -> TriageProposalOut:
+async def get_triage(proposal_id: ProposalId, session: SessionDep) -> TriageProposalOut:
     return TriageProposalOut.model_validate(await review_service.get_proposal(session, proposal_id))
 
 
 @router.post("/triage/{proposal_id}/approve", response_model=TriageProposalOut, tags=["triage"])
 async def approve_triage(
-    proposal_id: int, body: ReviewIn, session: SessionDep
+    proposal_id: ProposalId, body: ReviewIn, session: SessionDep
 ) -> TriageProposalOut:
     return await _review(session, proposal_id, body, "approved")
 
 
 @router.post("/triage/{proposal_id}/reject", response_model=TriageProposalOut, tags=["triage"])
-async def reject_triage(proposal_id: int, body: ReviewIn, session: SessionDep) -> TriageProposalOut:
+async def reject_triage(
+    proposal_id: ProposalId, body: ReviewIn, session: SessionDep
+) -> TriageProposalOut:
     return await _review(session, proposal_id, body, "rejected")
 
 
@@ -176,8 +184,8 @@ async def create_runbook(body: RunbookIn, session: SessionDep) -> RunbookOut:
 @router.get("/runbooks", tags=["runbooks"])
 async def list_runbooks(
     session: SessionDep,
-    q: Annotated[str | None, Query(min_length=2, max_length=200)] = None,
-    service: Annotated[str | None, Query(max_length=100)] = None,
+    q: Annotated[Text | None, Query(min_length=2, max_length=200)] = None,
+    service: ServiceFilter = None,
     limit: Limit = 50,
     offset: Offset = 0,
 ) -> Page[RunbookOut] | Page[RunbookSearchHit]:

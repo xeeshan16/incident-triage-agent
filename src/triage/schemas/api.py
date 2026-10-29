@@ -2,16 +2,38 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
 IncidentStatus = Literal["open", "actioned"]
 ProposalStatus = Literal["pending_review", "approved", "rejected"]
 
 _MAX_PAYLOAD_BYTES = 32_768
+PG_BIGINT_MAX = 2**63 - 1
+
+
+def _no_nul(value: str) -> str:
+    # PostgreSQL text and jsonb cannot store U+0000; without this the INSERT fails with a 500.
+    if "\x00" in value:
+        raise ValueError("must not contain NUL (U+0000) characters")
+    return value
+
+
+def _json_has_nul(value: Any) -> bool:
+    if isinstance(value, str):
+        return "\x00" in value
+    if isinstance(value, dict):
+        return any(_json_has_nul(k) or _json_has_nul(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(_json_has_nul(v) for v in value)
+    return False
+
+
+Text = Annotated[str, AfterValidator(_no_nul)]
 
 
 class AlertIn(BaseModel):
@@ -19,8 +41,8 @@ class AlertIn(BaseModel):
 
     service: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9._\-]+$")
     severity: Severity
-    title: str = Field(min_length=1, max_length=500)
-    fingerprint: str = Field(min_length=1, max_length=200)
+    title: Text = Field(min_length=1, max_length=500)
+    fingerprint: Text = Field(min_length=1, max_length=200)
     payload: dict[str, Any] = Field(default_factory=dict)
     received_at: datetime | None = Field(
         default=None, description="Defaults to server time. Must be timezone-aware if given."
@@ -28,11 +50,11 @@ class AlertIn(BaseModel):
 
     @field_validator("payload")
     @classmethod
-    def _payload_size(cls, v: dict[str, Any]) -> dict[str, Any]:
-        import json
-
+    def _payload_checks(cls, v: dict[str, Any]) -> dict[str, Any]:
         if len(json.dumps(v, default=str)) > _MAX_PAYLOAD_BYTES:
             raise ValueError(f"payload exceeds {_MAX_PAYLOAD_BYTES} bytes when serialised")
+        if _json_has_nul(v):
+            raise ValueError("payload must not contain NUL (U+0000) characters")
         return v
 
     @field_validator("received_at")
@@ -119,17 +141,17 @@ class IncidentDetail(IncidentSummary):
 class ReviewIn(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    reviewer: str = Field(min_length=1, max_length=100)
-    note: str = Field(default="", max_length=4_000)
+    reviewer: Text = Field(min_length=1, max_length=100)
+    note: Text = Field(default="", max_length=4_000)
 
 
 class RunbookIn(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    title: str = Field(min_length=1, max_length=300)
-    service: str | None = Field(default=None, max_length=100)
-    body: str = Field(min_length=1, max_length=50_000)
-    tags: list[str] = Field(default_factory=list, max_length=20)
+    title: Text = Field(min_length=1, max_length=300)
+    service: Text | None = Field(default=None, max_length=100)
+    body: Text = Field(min_length=1, max_length=50_000)
+    tags: list[Text] = Field(default_factory=list, max_length=20)
 
     @field_validator("tags")
     @classmethod
