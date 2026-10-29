@@ -73,8 +73,8 @@ async def test_search_runbooks_fts_ranking_and_service_scope(sessions: SessionFa
         sessions, "search_runbooks", {"query": "postgres pool timeout", "service": "payments-api"}
     )
     titles = [r["title"] for r in body["results"]]
-    assert titles[0] == "Postgres connection pool exhaustion"
-    assert "Ledger reconciliation lag" not in titles  # other service excluded
+    assert titles[0] == "<untrusted_text>Postgres connection pool exhaustion</untrusted_text>"
+    assert not any("Ledger" in t for t in titles)  # other service excluded
     assert prov.runbook == {r["id"] for r in body["results"]}
 
     # Generic (service IS NULL) runbooks are always eligible.
@@ -148,7 +148,9 @@ async def test_find_similar_incidents(sessions: SessionFactory) -> None:
     assert unrelated not in ids
     assert other_service not in ids
     assert current not in ids
-    assert body["incidents"][0]["approved_triage_summary"] == "Pool leak in refunds worker."
+    assert body["incidents"][0]["approved_triage_summary"] == (
+        "<untrusted_text>Pool leak in refunds worker.</untrusted_text>"
+    )
     assert prov.incident == set(ids)
 
 

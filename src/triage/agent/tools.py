@@ -323,11 +323,13 @@ async def _search_runbooks(
         "results": [
             {
                 "id": h.id,
-                "title": h.title,
+                # Runbooks are internal, but POST /runbooks is unauthenticated, so treat their
+                # text exactly like alert text.
+                "title": wrap_untrusted_text(h.title),
                 "service": h.service,
-                "tags": h.tags,
+                "tags": [wrap_untrusted_text(t) for t in h.tags],
                 "rank": round(h.rank, 4),
-                "snippet": h.snippet,
+                "snippet": wrap_untrusted_text(h.snippet),
             }
             for h in hits
         ]
@@ -379,7 +381,12 @@ async def _find_similar_incidents(
                 "same_fingerprint": bool(r.same_fingerprint),
                 "title_similarity": round(float(r.similarity), 3),
                 "first_seen_at": r.Incident.first_seen_at,
-                "approved_triage_summary": approved.get(r.Incident.id),
+                # Model-written text from an earlier run: may echo injected content.
+                "approved_triage_summary": (
+                    wrap_untrusted_text(approved[r.Incident.id])
+                    if r.Incident.id in approved
+                    else None
+                ),
             }
             for r in rows
         ]
