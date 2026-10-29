@@ -16,7 +16,8 @@ Two kinds of review are described separately:
 
 ### Automated gates
 
-Every change had to pass all of these before it was committed (CI runs the same set):
+These were run before each commit (CI runs the same set). Two commits slipped through with a
+gate not passing; both are recorded at the end of the findings log.
 
 | Gate | Command | What it catches |
 | --- | --- | --- |
@@ -80,11 +81,19 @@ on the pre-fix code; that failure was observed before each fix was applied.
 | F9 | Prompt injection / correctness | Oversized tool output was cut with a raw string slice. The JSON became invalid, an `<untrusted_alert_payload>` wrapper could be left unterminated (so later text would appear to be outside it), and provenance still contained ids the model never received, so those ids could be cited. | Per-payload cap applied **inside** the wrapper; whole list items dropped until the output fits (marked `truncated` / `omitted_items`); provenance records only ids actually emitted. | `6ab24b5` |
 | F10 | Error paths / operability | With the database host unreachable, `/readyz` blocked on TCP connect for about 60 s before answering. Measured: 60.1 s before, 2.0 s after. | 2-second timeout around the readiness query. | `9218e70` |
 
-A process slip, recorded here because it is relevant to how much the gates can be trusted:
-the F3 fix (`03f72b5`) was committed after running lint, types and tests but **not** the evals.
-The eval scenarios generated timestamps slightly in the future and started failing. This was
-caught at the next full gate run and fixed in `8f2851d`; from then on the evals were part of
-every pre-commit gate run.
+Two process slips, recorded here because they bear on how much the gates can be trusted:
+
+- `78e42d4` (F1) was committed with a **mypy failure** in its new test. The gate command piped
+  mypy through `tail`, which hid the non-zero exit status. Fixed in the next commit (`7193ead`),
+  after which gates were run through a script with `set -euo pipefail`.
+- `03f72b5` (F3) was committed after lint, types and tests but **without running the evals**.
+  The eval scenarios generated timestamps slightly in the future and started failing. Caught at
+  the next full gate run and fixed in `8f2851d`; from then on the evals were part of every
+  pre-commit gate run.
+
+The project was also committed layer by layer, with the test suite arriving in one commit
+(`488d697`) after the feature commits. Each earlier commit imports cleanly, but was not
+individually tested at that point in history.
 
 Earlier in the build, before the first commit, the gates also caught problems that never reached
 a commit. These are noted for completeness but are not part of the findings log: mypy found an
