@@ -26,7 +26,11 @@ def get_session_factory(request: Request) -> SessionFactory:
 async def get_tx_session(
     factory: Annotated[SessionFactory, Depends(get_session_factory)],
 ) -> AsyncIterator[AsyncSession]:
-    """One transaction per request: committed if the handler returns, rolled back if it raises."""
+    """One transaction per request: committed if the handler returns, rolled back if it raises.
+
+    Must be used with ``scope="function"`` (see ``SessionDep``) so the commit happens before the
+    response is sent; otherwise a failed commit would follow a 2xx already on the wire.
+    """
     async with factory() as session, session.begin():
         yield session
 
@@ -37,6 +41,6 @@ def get_agent(request: Request) -> TriageAgent:
 
 
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
-SessionDep = Annotated[AsyncSession, Depends(get_tx_session)]
+SessionDep = Annotated[AsyncSession, Depends(get_tx_session, scope="function")]
 SessionFactoryDep = Annotated[SessionFactory, Depends(get_session_factory)]
 AgentDep = Annotated[TriageAgent, Depends(get_agent)]
