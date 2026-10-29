@@ -252,11 +252,27 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 # ----------------------------------------------------------------------------- execution
 
 
-def _dump(obj: Any, max_chars: int) -> str:
-    text = json.dumps(obj, default=str, separators=(",", ":"))
-    if len(text) > max_chars:
-        return text[:max_chars] + '..."<truncated: output exceeded size limit>"'
-    return text
+def _to_json(obj: Any) -> str:
+    return json.dumps(obj, default=str, separators=(",", ":"), ensure_ascii=False)
+
+
+def _fit(output: dict[str, Any], list_key: str, max_chars: int) -> dict[str, Any]:
+    """Drop trailing items of ``output[list_key]`` until the JSON fits in ``max_chars``.
+
+    Truncation is structural (whole items), so the result is always valid JSON and every
+    untrusted-data wrapper stays closed. Raw slicing could cut a payload mid-way and leave an
+    unterminated <untrusted_...> tag, letting the model read later text as outside the wrapper.
+    """
+    items = list(output[list_key])
+    total = len(items)
+    while True:
+        candidate = {**output, list_key: items}
+        if len(items) < total:
+            candidate["truncated"] = True
+            candidate["omitted_items"] = total - len(items)
+        if len(_to_json(candidate)) <= max_chars or not items:
+            return candidate
+        items = items[:-1]
 
 
 def _validation_error(tool: str, exc: ValidationError) -> ToolResult:
@@ -268,12 +284,15 @@ def _validation_error(tool: str, exc: ValidationError) -> ToolResult:
     return ToolResult(json.dumps(body), is_error=True)
 
 
-ToolHandler = Callable[[AsyncSession, Any, ProvenanceSet], Awaitable[Any]]
+ToolHandler = Callable[[AsyncSession, Any, ProvenanceSet, int], Awaitable[dict[str, Any]]]
+
+# Per-alert payload cap so one huge payload cannot crowd out every other alert.
+PAYLOAD_MAX_CHARS = 4_000
 
 
 async def _get_incident_alerts(
-    session: AsyncSession, args: GetIncidentAlertsInput, prov: ProvenanceSet
-) -> Any:
+    session: AsyncSession, args: GetIncidentAlertsInput, prov: ProvenanceSet, max_chars: int
+) -> dict[str, Any]:
     incident = await session.get(Incident, args.incident_id)
     if incident is None:
         return {"error": "not_found", "incident_id": args.incident_id}
@@ -285,12 +304,7 @@ async def _get_incident_alerts(
             .limit(args.limit)
         )
     ).all()
-    prov.add("incident", [incident.id])
-    prov.add("alert", [a.id for a in alerts])
-    prov.suspicious_alerts.update(
-        a.id for a in alerts if looks_like_injection(a.payload) or looks_like_injection(a.title)
-    )
-    return {
+    output = {
         "incident": {
             "id": incident.id,
             "service": incident.service,
@@ -307,19 +321,28 @@ async def _get_incident_alerts(
                 "duplicate_count": a.duplicate_count,
                 "received_at": a.received_at,
                 "last_received_at": a.last_received_at,
-                "payload": wrap_untrusted(a.id, a.payload),
+                "payload": wrap_untrusted(a.id, a.payload, max_chars=PAYLOAD_MAX_CHARS),
             }
             for a in alerts
         ],
     }
+    fitted = _fit(output, "alerts", max_chars)
+    shown = {a["id"] for a in fitted["alerts"]}
+    prov.add("incident", [incident.id])
+    prov.add("alert", sorted(shown))
+    prov.suspicious_alerts.update(
+        a.id
+        for a in alerts
+        if a.id in shown and (looks_like_injection(a.payload) or looks_like_injection(a.title))
+    )
+    return fitted
 
 
 async def _search_runbooks(
-    session: AsyncSession, args: SearchRunbooksInput, prov: ProvenanceSet
-) -> Any:
+    session: AsyncSession, args: SearchRunbooksInput, prov: ProvenanceSet, max_chars: int
+) -> dict[str, Any]:
     hits = await search_runbooks(session, args.query, service=args.service, limit=args.limit)
-    prov.add("runbook", [h.id for h in hits])
-    return {
+    output = {
         "results": [
             {
                 "id": h.id,
@@ -334,11 +357,14 @@ async def _search_runbooks(
             for h in hits
         ]
     }
+    fitted = _fit(output, "results", max_chars)
+    prov.add("runbook", [r["id"] for r in fitted["results"]])
+    return fitted
 
 
 async def _find_similar_incidents(
-    session: AsyncSession, args: FindSimilarIncidentsInput, prov: ProvenanceSet
-) -> Any:
+    session: AsyncSession, args: FindSimilarIncidentsInput, prov: ProvenanceSet, max_chars: int
+) -> dict[str, Any]:
     from triage.db.models import TriageProposal  # local: avoids widening module imports
 
     target = await session.get(Incident, args.incident_id)
@@ -370,8 +396,7 @@ async def _find_similar_incidents(
             .distinct(TriageProposal.incident_id)
         )
         approved = {row.incident_id: row.summary for row in summaries}
-    prov.add("incident", ids)
-    return {
+    output = {
         "incidents": [
             {
                 "id": r.Incident.id,
@@ -391,11 +416,14 @@ async def _find_similar_incidents(
             for r in rows
         ]
     }
+    fitted = _fit(output, "incidents", max_chars)
+    prov.add("incident", [i["id"] for i in fitted["incidents"]])
+    return fitted
 
 
 async def _get_service_recent_history(
-    session: AsyncSession, args: GetServiceRecentHistoryInput, prov: ProvenanceSet
-) -> Any:
+    session: AsyncSession, args: GetServiceRecentHistoryInput, prov: ProvenanceSet, max_chars: int
+) -> dict[str, Any]:
     since = datetime.now(UTC) - timedelta(days=args.days)
     incidents = (
         await session.scalars(
@@ -405,8 +433,7 @@ async def _get_service_recent_history(
             .limit(args.limit)
         )
     ).all()
-    prov.add("incident", [i.id for i in incidents])
-    return {
+    output = {
         "service": args.service,
         "window_days": args.days,
         "incidents": [
@@ -422,6 +449,9 @@ async def _get_service_recent_history(
             for i in incidents
         ],
     }
+    fitted = _fit(output, "incidents", max_chars)
+    prov.add("incident", [i["id"] for i in fitted["incidents"]])
+    return fitted
 
 
 _REGISTRY: dict[str, tuple[type[BaseModel], ToolHandler]] = {
@@ -452,9 +482,8 @@ async def execute_tool(
         args = model.model_validate(raw_input)
     except ValidationError as exc:
         return _validation_error(name, exc)
-    output = await handler(session, args, provenance)
-    is_error = isinstance(output, dict) and "error" in output
-    return ToolResult(_dump(output, max_output_chars), is_error=is_error)
+    output = await handler(session, args, provenance, max_output_chars)
+    return ToolResult(_to_json(output), is_error="error" in output)
 
 
 def parse_submission(raw_input: object) -> SubmitTriageInput | ToolResult:

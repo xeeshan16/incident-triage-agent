@@ -739,15 +739,17 @@ async def test_tool_output_is_truncated(sessions: SessionFactory, make_agent: An
         max_iterations=3,
         token_budget=100_000,
         timeout_seconds=5,
-        tool_output_max_chars=2_000,
+        tool_output_max_chars=6_000,
     )
     llm = ScriptedLLM(
         [tool_call("get_incident_alerts", {"incident_id": incident_id}), text_reply("hm")] * 2
     )
     await make_agent(llm, cfg).run(incident_id)
     content = llm.calls[1]["messages"][-1]["content"][0]["content"]
-    assert len(content) < 2_100
-    assert content.endswith('"<truncated: output exceeded size limit>"')
+    assert len(content) <= 6_000
+    payload = json.loads(content)["alerts"][0]["payload"]
+    # The single oversized payload is capped inside its wrapper, not cut mid-tag.
+    assert payload.endswith(" [payload truncated]</untrusted_alert_payload>")
 
 
 def test_no_write_tools_are_exposed() -> None:

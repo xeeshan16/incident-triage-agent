@@ -262,3 +262,26 @@ async def test_missing_api_key_fails_run_cleanly(
         run = (await s.scalars(select(AgentRun))).one()
         assert run.status == "failed"
         assert "ANTHROPIC_API_KEY" in (run.error or "")
+
+
+# --- F9: truncated tool output must stay valid JSON with intact untrusted delimiters ----------
+
+
+async def test_oversized_tool_output_is_truncated_structurally(sessions: SessionFactory) -> None:
+    from triage.agent.tools import ProvenanceSet, execute_tool
+
+    _, incident_id = await add_alert(sessions, payload={"blob": "x" * 20_000}, fingerprint="a")
+    for i in range(5):
+        await add_alert(sessions, payload={"blob": "y" * 5_000}, fingerprint=f"b{i}")
+    prov = ProvenanceSet()
+    async with sessions() as s:
+        r = await execute_tool(
+            s, "get_incident_alerts", {"incident_id": incident_id}, prov, max_output_chars=8_000
+        )
+    assert len(r.content) <= 8_000
+    body = json.loads(r.content)  # must still parse
+    assert body["truncated"] is True
+    for alert in body["alerts"]:
+        assert alert["payload"].endswith("</untrusted_alert_payload>")
+    # Only alerts actually shown to the model are citable.
+    assert prov.alert == {a["id"] for a in body["alerts"]}

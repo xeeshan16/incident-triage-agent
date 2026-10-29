@@ -66,8 +66,11 @@ def escape_tags(text: str) -> str:
     return text.translate(_TAG_CHARS)
 
 
-def wrap_untrusted(alert_id: int, payload: dict[str, Any]) -> str:
+def wrap_untrusted(alert_id: int, payload: dict[str, Any], *, max_chars: int | None = None) -> str:
+    """Serialise, escape and delimit an alert payload. Truncation happens *inside* the tags."""
     body = escape_tags(json.dumps(payload, default=str, ensure_ascii=False, sort_keys=True))
+    if max_chars is not None and len(body) > max_chars:
+        body = body[:max_chars] + " [payload truncated]"
     return f'<untrusted_alert_payload alert_id="{alert_id}">{body}</untrusted_alert_payload>'
 
 
