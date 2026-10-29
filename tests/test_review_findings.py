@@ -241,3 +241,24 @@ async def test_empty_end_turn_does_not_produce_empty_assistant_message(
             assert message["content"], f"empty {message['role']} message sent to the API"
         roles = [m["role"] for m in call["messages"]]
         assert all(a != b for a, b in itertools.pairwise(roles)), roles
+
+
+# --- F8: a missing API key is a clear, recorded failure, not an opaque 500 --------------------
+
+
+async def test_missing_api_key_fails_run_cleanly(
+    settings: Settings, engine: Any, sessions: SessionFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = create_app(settings.model_copy(update={"anthropic_api_key": None}))  # real client
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c,
+    ):
+        created = (await c.post("/alerts", json=ALERT)).json()
+        r = await c.post(f"/incidents/{created['incident_id']}/triage")
+    assert r.status_code == 502, r.text
+    assert r.json()["termination_reason"] == "llm_error"
+    async with sessions() as s:
+        run = (await s.scalars(select(AgentRun))).one()
+        assert run.status == "failed"
+        assert "ANTHROPIC_API_KEY" in (run.error or "")

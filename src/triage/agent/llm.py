@@ -94,7 +94,13 @@ def _retry_after(exc: anthropic.APIStatusError) -> float | None:
 
 
 class AnthropicClient:
-    """Adapter from the official ``anthropic`` SDK to ``LLMClient``."""
+    """Adapter from the official ``anthropic`` SDK to ``LLMClient``.
+
+    The key comes only from our settings (ANTHROPIC_API_KEY). Without one, the SDK is not
+    constructed at all: it would otherwise fall back to profiles/config files on the host,
+    making behaviour depend on the machine. Calls then fail with a clear ``LLMError`` and the
+    rest of the service (ingest, review, health) keeps working.
+    """
 
     def __init__(
         self,
@@ -103,9 +109,9 @@ class AnthropicClient:
         timeout_seconds: float = 60.0,
         sdk: anthropic.AsyncAnthropic | None = None,
     ) -> None:
-        self._sdk = sdk or anthropic.AsyncAnthropic(
-            api_key=api_key, timeout=timeout_seconds, max_retries=0
-        )
+        if sdk is None and api_key:
+            sdk = anthropic.AsyncAnthropic(api_key=api_key, timeout=timeout_seconds, max_retries=0)
+        self._sdk = sdk
 
     async def create(
         self,
@@ -116,6 +122,8 @@ class AnthropicClient:
         tools: list[dict[str, Any]],
         max_tokens: int,
     ) -> LLMResponse:
+        if self._sdk is None:
+            raise LLMError("ANTHROPIC_API_KEY is not configured; cannot call the Claude API")
         try:
             # Messages/tools are built as plain dicts; the SDK's TypedDict params are structural,
             # so cast rather than re-declaring every block type here.
